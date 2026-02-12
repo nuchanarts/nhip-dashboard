@@ -1,13 +1,27 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from streamlit_autorefresh import st_autorefresh
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
+from reportlab.lib import colors
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib import styles
+from reportlab.lib.units import inch
+from reportlab.platypus import TableStyle
+from io import BytesIO
 
-st.set_page_config(page_title="NHIP Dashboard", layout="wide")
+st.set_page_config(page_title="NHIP Smart Dashboard", layout="wide")
 
-st.title("📊 NHIP Dashboard (Google Drive Connected)")
+st.title("📊 NHIP Smart Auto Dashboard")
 
 # ==============================
-# เชื่อม Google Sheet โดยตรง
+# 🔄 Auto Refresh ทุก 5 นาที
+# ==============================
+
+st_autorefresh(interval=300000, key="datarefresh")  # 300000 ms = 5 นาที
+
+# ==============================
+# 🔗 เชื่อม Google Sheet
 # ==============================
 
 SPREADSHEET_ID = "1Y4FANer87OduQcK7XctCjJ0FBEKTHlXJ4aMZklcqzFU"
@@ -18,89 +32,148 @@ url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=cs
 try:
     df = pd.read_csv(url)
     df.columns = df.columns.str.strip()
-    st.success("เชื่อม Google Sheet สำเร็จ ✅")
-
-except Exception as e:
-    st.error("❌ ไม่สามารถเชื่อมได้ กรุณาตรวจสอบว่าเปิดแชร์แบบ Anyone with the link → Viewer แล้ว")
-    st.write(e)
+    st.success("เชื่อม Google Drive สำเร็จ ✅")
+except:
+    st.error("❌ เชื่อมไม่ได้ กรุณาตรวจสอบการแชร์")
     st.stop()
 
 # ==============================
-# เลือกคอลัมน์ใช้งาน
+# 🧠 Auto Detect Columns
 # ==============================
 
-st.sidebar.header("⚙️ ตั้งค่าคอลัมน์")
+date_col = None
+province_col = None
+category_col = None
+numeric_col = None
 
-date_col = st.sidebar.selectbox("เลือกคอลัมน์วันที่", df.columns)
-province_col = st.sidebar.selectbox("เลือกคอลัมน์จังหวัด", df.columns)
-category_col = st.sidebar.selectbox("เลือกคอลัมน์ประเภท/แผนก", df.columns)
+for col in df.columns:
+    if "วัน" in col or "date" in col.lower():
+        date_col = col
+    elif "จังหวัด" in col or "province" in col.lower():
+        province_col = col
+    elif df[col].dtype == "object" and not category_col:
+        category_col = col
+    elif pd.api.types.is_numeric_dtype(df[col]) and not numeric_col:
+        numeric_col = col
 
-df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+if date_col:
+    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
 
 # ==============================
-# Filter
+# 🎛 Filters
 # ==============================
 
 st.sidebar.header("🔎 ตัวกรอง")
 
-province_filter = st.sidebar.multiselect(
-    "เลือกจังหวัด",
-    df[province_col].dropna().unique(),
-    default=df[province_col].dropna().unique()
-)
+filtered_df = df.copy()
 
-category_filter = st.sidebar.multiselect(
-    "เลือกประเภท",
-    df[category_col].dropna().unique(),
-    default=df[category_col].dropna().unique()
-)
+if province_col:
+    provinces = df[province_col].dropna().unique()
+    province_filter = st.sidebar.multiselect(
+        "เลือกจังหวัด", provinces, default=provinces
+    )
+    filtered_df = filtered_df[filtered_df[province_col].isin(province_filter)]
 
-filtered_df = df[
-    (df[province_col].isin(province_filter)) &
-    (df[category_col].isin(category_filter))
-]
+if category_col:
+    categories = filtered_df[category_col].dropna().unique()
+    category_filter = st.sidebar.multiselect(
+        f"เลือก {category_col}", categories, default=categories
+    )
+    filtered_df = filtered_df[filtered_df[category_col].isin(category_filter)]
 
 # ==============================
-# KPI
+# 📊 KPI
 # ==============================
 
 col1, col2, col3 = st.columns(3)
 
-col1.metric("จำนวนรายการทั้งหมด", len(filtered_df))
-col2.metric("จำนวนจังหวัด", filtered_df[province_col].nunique())
-col3.metric("จำนวนประเภท", filtered_df[category_col].nunique())
+col1.metric("จำนวนทั้งหมด", len(filtered_df))
 
-st.divider()
-
-# ==============================
-# ตารางข้อมูล
-# ==============================
-
-st.subheader("📋 ตารางข้อมูล")
-st.dataframe(filtered_df, use_container_width=True)
-
-st.divider()
-
-# ==============================
-# กราฟแนวโน้มตามวันที่
-# ==============================
-
-st.subheader("📈 จำนวนรายการตามวันที่")
-
-graph_df = (
-    filtered_df
-    .groupby(filtered_df[date_col].dt.date)
-    .size()
-    .reset_index(name="จำนวนรายการ")
-)
-
-if not graph_df.empty:
-    fig = px.line(
-        graph_df,
-        x=date_col,
-        y="จำนวนรายการ",
-        markers=True
-    )
-    st.plotly_chart(fig, use_container_width=True)
+if province_col:
+    col2.metric("จำนวนจังหวัด", filtered_df[province_col].nunique())
 else:
-    st.warning("ไม่มีข้อมูลสำหรับแสดงกราฟ")
+    col2.metric("จำนวนคอลัมน์", len(filtered_df.columns))
+
+if numeric_col:
+    col3.metric("ผลรวมตัวเลข", round(filtered_df[numeric_col].sum(), 2))
+else:
+    col3.metric("จำนวนประเภท", filtered_df[category_col].nunique() if category_col else "-")
+
+st.divider()
+
+# ==============================
+# 📈 Charts
+# ==============================
+
+col_left, col_right = st.columns(2)
+
+if date_col:
+    trend_df = (
+        filtered_df
+        .groupby(filtered_df[date_col].dt.date)
+        .size()
+        .reset_index(name="จำนวน")
+    )
+
+    if not trend_df.empty:
+        fig1 = px.line(trend_df, x=date_col, y="จำนวน", markers=True)
+        col_left.plotly_chart(fig1, use_container_width=True)
+
+if province_col:
+    bar_df = (
+        filtered_df
+        .groupby(province_col)
+        .size()
+        .reset_index(name="จำนวน")
+        .sort_values("จำนวน", ascending=False)
+    )
+
+    fig2 = px.bar(bar_df, x=province_col, y="จำนวน")
+    col_right.plotly_chart(fig2, use_container_width=True)
+
+st.divider()
+
+# ==============================
+# 📋 ตารางข้อมูล
+# ==============================
+
+with st.expander("📋 ดูข้อมูลทั้งหมด"):
+    st.dataframe(filtered_df, use_container_width=True)
+
+# ==============================
+# 📄 Export PDF Report
+# ==============================
+
+def generate_pdf(dataframe):
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer)
+    elements = []
+
+    style = styles.getSampleStyleSheet()
+    elements.append(Paragraph("NHIP Dashboard Report", style["Title"]))
+    elements.append(Spacer(1, 0.5 * inch))
+
+    # เอาเฉพาะ 20 แถวแรกกัน PDF ใหญ่เกิน
+    table_data = [dataframe.columns.tolist()] + dataframe.head(20).values.tolist()
+
+    table = Table(table_data)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.grey),
+        ('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+        ('FONTSIZE', (0,0), (-1,-1), 8),
+    ]))
+
+    elements.append(table)
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+
+pdf_file = generate_pdf(filtered_df)
+
+st.download_button(
+    label="📄 ดาวน์โหลดรายงาน PDF",
+    data=pdf_file,
+    file_name="NHIP_Report.pdf",
+    mime="application/pdf"
+)
