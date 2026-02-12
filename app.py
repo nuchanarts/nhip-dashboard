@@ -11,45 +11,60 @@ st.set_page_config(
 )
 
 # ==============================
-# CUSTOM CSS (โทนสาธารณสุข)
+# LIGHT HEALTH THEME
 # ==============================
 st.markdown("""
 <style>
-body {
-    background-color: #f4fbf9;
-}
 
-[data-testid="stSidebar"] {
-    background-color: #e8f6f5;
-}
-
-h1, h2, h3 {
-    color: #0E7C7B;
-}
-
-.metric-card {
+/* พื้นหลังหลัก */
+.main {
     background-color: #ffffff;
-    padding: 20px;
-    border-radius: 12px;
-    box-shadow: 0px 2px 6px rgba(0,0,0,0.08);
+}
+
+/* Sidebar */
+[data-testid="stSidebar"] {
+    background-color: #F2FBFA;
+}
+
+/* หัวข้อ */
+h1, h2, h3 {
+    color: #2E7D6B;
+    font-weight: 600;
+}
+
+/* KPI Card */
+.metric-card {
+    background-color: #FFFFFF;
+    padding: 25px;
+    border-radius: 14px;
+    border: 1px solid #E0F2F1;
+    box-shadow: 0px 3px 8px rgba(0,0,0,0.05);
     text-align: center;
 }
 
+/* ปุ่ม */
 .stButton>button {
-    background-color: #0E7C7B;
+    background-color: #4DB6AC;
     color: white;
-    border-radius: 8px;
+    border-radius: 10px;
     border: none;
+    padding: 0.5rem 1rem;
 }
 
 .stButton>button:hover {
-    background-color: #0b5f5e;
+    background-color: #26A69A;
 }
+
+/* Divider */
+hr {
+    border: 1px solid #E0F2F1;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
 st.title("🏥 NHIP Dashboard")
-st.caption("ระบบรายงานข้อมูลเพื่อการบริหารจัดการด้านสาธารณสุข")
+st.caption("ระบบรายงานข้อมูลด้านสาธารณสุข")
 
 # ==============================
 # CONNECT GOOGLE SHEET
@@ -62,9 +77,9 @@ url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=cs
 try:
     df = pd.read_csv(url)
     df.columns = df.columns.str.strip()
-    st.success("เชื่อม Google Sheet สำเร็จ ✅")
-except Exception as e:
-    st.error("❌ ไม่สามารถเชื่อมได้ กรุณาตรวจสอบการแชร์ไฟล์")
+    st.success("เชื่อม Google Sheet สำเร็จ")
+except:
+    st.error("ไม่สามารถเชื่อม Google Sheet ได้ กรุณาตรวจสอบการแชร์ไฟล์")
     st.stop()
 
 # ==============================
@@ -81,7 +96,7 @@ df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
 # ==============================
 # FILTER
 # ==============================
-st.sidebar.header("🔎 ตัวกรองข้อมูล")
+st.sidebar.header("🔎 ตัวกรอง")
 
 province_filter = st.sidebar.multiselect(
     "เลือกจังหวัด",
@@ -101,7 +116,7 @@ filtered_df = df[
 ]
 
 # ==============================
-# KPI CARDS
+# KPI SECTION
 # ==============================
 col1, col2, col3 = st.columns(3)
 
@@ -109,7 +124,7 @@ with col1:
     st.markdown(f"""
     <div class="metric-card">
         <h3>จำนวนรายการทั้งหมด</h3>
-        <h2>{len(filtered_df):,}</h2>
+        <h2 style="color:#26A69A;">{len(filtered_df):,}</h2>
     </div>
     """, unsafe_allow_html=True)
 
@@ -117,7 +132,7 @@ with col2:
     st.markdown(f"""
     <div class="metric-card">
         <h3>จำนวนจังหวัด</h3>
-        <h2>{filtered_df[province_col].nunique():,}</h2>
+        <h2 style="color:#26A69A;">{filtered_df[province_col].nunique():,}</h2>
     </div>
     """, unsafe_allow_html=True)
 
@@ -125,14 +140,14 @@ with col3:
     st.markdown(f"""
     <div class="metric-card">
         <h3>จำนวนประเภท</h3>
-        <h2>{filtered_df[category_col].nunique():,}</h2>
+        <h2 style="color:#26A69A;">{filtered_df[category_col].nunique():,}</h2>
     </div>
     """, unsafe_allow_html=True)
 
 st.divider()
 
 # ==============================
-# DATA TABLE
+# TABLE
 # ==============================
 st.subheader("📋 ตารางข้อมูล")
 st.dataframe(filtered_df, use_container_width=True)
@@ -142,7 +157,7 @@ st.divider()
 # ==============================
 # TREND GRAPH
 # ==============================
-st.subheader("📈 แนวโน้มตามวันที่")
+st.subheader("📈 แนวโน้มข้อมูลรายวัน")
 
 graph_df = (
     filtered_df
@@ -157,11 +172,11 @@ if not graph_df.empty:
         x=date_col,
         y="จำนวนรายการ",
         markers=True,
-        color_discrete_sequence=["#0E7C7B"]
+        color_discrete_sequence=["#4DB6AC"]
     )
     fig.update_layout(
-        plot_bgcolor="#ffffff",
-        paper_bgcolor="#f4fbf9"
+        plot_bgcolor="#FFFFFF",
+        paper_bgcolor="#FFFFFF"
     )
     st.plotly_chart(fig, use_container_width=True)
 else:
