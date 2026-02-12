@@ -2,159 +2,165 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import requests
-import json
-from urllib.parse import quote
+import re
 
-# =============================
-# App Setup
-# =============================
-st.set_page_config(page_title="NHIP Executive Dashboard", layout="wide")
-st.title("🏥 NHIP Executive Dashboard")
+# -----------------------------
+# CONFIG
+# -----------------------------
+st.set_page_config(
+    page_title="NHIP Executive Dashboard",
+    layout="wide"
+)
 
 SPREADSHEET_ID = "1Y4FANer87OduQcK7XctCjJ0FBEKTHlXJ4aMZklcqzFU"
 
-# =============================
-# Load Sheet Names
-# =============================
+# -----------------------------
+# AUTO REFRESH 5 นาที
+# -----------------------------
+st.markdown(
+    """
+    <meta http-equiv="refresh" content="300">
+    """,
+    unsafe_allow_html=True
+)
+
+# -----------------------------
+# THEME (สว่าง สาธารณสุข)
+# -----------------------------
+st.markdown("""
+<style>
+body { background-color: #f4fbf9; }
+.metric-card {
+    background-color: #e8f5f3;
+    padding: 20px;
+    border-radius: 12px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# -----------------------------
+# LOAD SHEET NAMES
+# -----------------------------
 @st.cache_data(ttl=300)
 def get_sheet_names():
-    try:
-        url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:json"
-        res = requests.get(url)
-        text = res.text
-        json_str = text[text.find("{"):text.rfind("}")+1]
-        data = json.loads(json_str)
-        sheets = data.get("sheets", [])
-        return [s["properties"]["title"] for s in sheets]
-    except Exception as e:
-        return []
+    url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
+    res = requests.get(url)
+    matches = re.findall(r'"title":"(.*?)"', res.text)
+    return list(set(matches))
 
-sheet_list = get_sheet_names()
-
-if not sheet_list:
-    st.error("❌ ไม่สามารถอ่านรายชื่อ sheet ได้")
-    st.stop()
-
-# =============================
-# Load All Sheets Data
-# =============================
+# -----------------------------
+# LOAD ALL SHEETS
+# -----------------------------
 @st.cache_data(ttl=300)
 def load_all_sheets():
     sheet_names = get_sheet_names()
-    all_dataframes = []
+    all_dfs = []
+
     for sheet in sheet_names:
         try:
-            encoded = quote(sheet)
-            url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet={encoded}"
-            temp_df = pd.read_csv(url)
-            if temp_df.shape[0] > 0:
-                temp_df.columns = temp_df.columns.str.strip()
-                temp_df["Sheet"] = sheet
-                all_dataframes.append(temp_df)
-        except Exception as e:
-            continue
-    if not all_dataframes:
-        return None
-    return pd.concat(all_dataframes, ignore_index=True)
+            csv_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet}"
+            df = pd.read_csv(csv_url)
+            df["Sheet"] = sheet
+            all_dfs.append(df)
+        except:
+            pass
+
+    if not all_dfs:
+        return pd.DataFrame()
+
+    return pd.concat(all_dfs, ignore_index=True)
 
 df = load_all_sheets()
-if df is None:
-    st.error("❌ ไม่พบข้อมูลจาก sheet ใด ๆ")
+
+if df.empty:
+    st.error("❌ ไม่สามารถโหลดข้อมูลได้")
     st.stop()
 
-# =============================
-# Detect Columns
-# =============================
-zone_col    = next((c for c in df.columns if "เขต"      in c), None)
-province_col= next((c for c in df.columns if "จังหวัด"  in c), None)
-date_col    = next((c for c in df.columns if "วัน" in c or "date" in c.lower()), None)
+# -----------------------------
+# CLEAN COLUMN NAMES
+# -----------------------------
+df.columns = df.columns.str.strip()
 
-if date_col:
-    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-
-# =============================
-# Sidebar Filters
-# =============================
+# -----------------------------
+# SIDEBAR FILTER
+# -----------------------------
 st.sidebar.header("🔎 ตัวกรองข้อมูล")
 
-filtered_df = df.copy()
+if "เขต" in df.columns:
+    zone = st.sidebar.selectbox("เลือกเขต", ["ทั้งหมด"] + sorted(df["เขต"].dropna().unique().tolist()))
+    if zone != "ทั้งหมด":
+        df = df[df["เขต"] == zone]
 
-# Filter by Zone
-if zone_col:
-    zones = sorted(df[zone_col].dropna().unique())
-    selected_zones = st.sidebar.multiselect("เลือกเขต", zones, default=zones)
-    filtered_df = filtered_df[filtered_df[zone_col].isin(selected_zones)]
+if "จังหวัด" in df.columns:
+    province = st.sidebar.selectbox("เลือกจังหวัด", ["ทั้งหมด"] + sorted(df["จังหวัด"].dropna().unique().tolist()))
+    if province != "ทั้งหมด":
+        df = df[df["จังหวัด"] == province]
 
-# Filter by Province
-if province_col:
-    provinces = sorted(filtered_df[province_col].dropna().unique())
-    selected_provinces = st.sidebar.multiselect("เลือกจังหวัด", provinces, default=provinces)
-    filtered_df = filtered_df[filtered_df[province_col].isin(selected_provinces)]
+# -----------------------------
+# TITLE
+# -----------------------------
+st.title("📊 NHIP Executive Dashboard")
 
-# =============================
-# Executive Summary
-# =============================
-st.header("📊 Executive Summary")
+# -----------------------------
+# KPI SUMMARY
+# -----------------------------
+st.subheader("📌 Executive Summary")
 
-col1, col2, col3 = st.columns(3)
+numeric_cols = df.select_dtypes(include="number").columns.tolist()
 
-col1.metric("จำนวนรายการทั้งหมด", len(filtered_df))
-if province_col:
-    col2.metric("จำนวนจังหวัดที่มีข้อมูล", filtered_df[province_col].nunique())
-col3.metric("จำนวน Sheet ที่มีข้อมูล", filtered_df["Sheet"].nunique())
+if numeric_cols:
+    col1, col2, col3 = st.columns(3)
 
-st.divider()
+    total_value = df[numeric_cols[0]].sum()
+    avg_value = df[numeric_cols[0]].mean()
+    max_value = df[numeric_cols[0]].max()
 
-# =============================
-# Trend Analysis
-# =============================
-if date_col:
-    st.subheader("🧠 วิเคราะห์แนวโน้มอัตโนมัติ")
+    col1.metric("ยอดรวมทั้งหมด", f"{total_value:,.0f}")
+    col2.metric("ค่าเฉลี่ย", f"{avg_value:,.2f}")
+    col3.metric("ค่าสูงสุด", f"{max_value:,.0f}")
 
-    trend_df = (
-        filtered_df
-        .groupby(["Sheet", filtered_df[date_col].dt.date])
-        .size()
-        .reset_index(name="จำนวน")
-    )
+# -----------------------------
+# TREND ANALYSIS (Sheet เพิ่ม/ลด)
+# -----------------------------
+st.subheader("📈 วิเคราะห์แนวโน้มแต่ละ Sheet")
 
-    for sheet in trend_df["Sheet"].unique():
-        sheet_data = trend_df[trend_df["Sheet"] == sheet].sort_values(date_col)
-        if len(sheet_data) >= 2:
-            last  = sheet_data["จำนวน"].iloc[-1]
-            prev  = sheet_data["จำนวน"].iloc[-2]
-            diff  = last - prev
-            pct   = (diff / prev * 100) if prev != 0 else 0
+trend_data = df.groupby("Sheet")[numeric_cols[0]].sum().reset_index()
 
-            status = "🟡 คงที่"
-            if diff > 0:
-                status = "🟢 เพิ่มขึ้น"
-            elif diff < 0:
-                status = "🔴 ลดลง"
+fig_trend = px.bar(
+    trend_data,
+    x="Sheet",
+    y=numeric_cols[0],
+    color=numeric_cols[0],
+    color_continuous_scale="Tealgrn"
+)
 
-            st.markdown(f"• **{sheet}** : {status} {diff:+} ({pct:.1f}%)")
+st.plotly_chart(fig_trend, use_container_width=True)
 
-    fig_trend = px.line(
-        trend_df,
-        x=date_col,
-        y="จำนวน",
-        color="Sheet",
-        markers=True,
-        color_discrete_sequence=px.colors.sequential.Teal
-    )
-    st.plotly_chart(fig_trend, use_container_width=True)
+# วิเคราะห์เพิ่ม/ลด
+if len(trend_data) >= 2:
+    trend_data = trend_data.sort_values("Sheet")
+    diff = trend_data[numeric_cols[0]].diff().iloc[-1]
 
-st.divider()
+    if diff > 0:
+        st.success("📈 แนวโน้มเพิ่มขึ้นจาก Sheet ก่อนหน้า")
+    elif diff < 0:
+        st.warning("📉 แนวโน้มลดลงจาก Sheet ก่อนหน้า")
+    else:
+        st.info("➖ แนวโน้มคงที่")
 
-# =============================
-# Full Table
-# =============================
-st.subheader("📋 ตารางข้อมูลที่กรองแล้ว")
-st.dataframe(filtered_df, use_container_width=True)
+# -----------------------------
+# DATA TABLE
+# -----------------------------
+st.subheader("📄 ตารางข้อมูล")
+st.dataframe(df, use_container_width=True)
 
+# -----------------------------
+# EXPORT CSV
+# -----------------------------
+csv = df.to_csv(index=False).encode("utf-8")
 st.download_button(
-    label="📥 ดาวน์โหลด CSV",
-    data=filtered_df.to_csv(index=False).encode("utf-8"),
-    file_name="NHIP_filtered_data.csv",
-    mime="text/csv"
+    "📥 ดาวน์โหลดข้อมูล (CSV)",
+    csv,
+    "NHIP_Report.csv",
+    "text/csv"
 )
