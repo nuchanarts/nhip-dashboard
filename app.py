@@ -5,40 +5,27 @@ import requests
 import json
 from urllib.parse import quote
 
-# ==============================
-# ตั้งค่าแอป
-# ==============================
 st.set_page_config(page_title="NHIP Executive Dashboard", layout="wide")
-
-st.markdown("""
-<style>
-.main { background-color: #F3FBF8; }
-h1, h2, h3 { color: #127C5C; }
-div[data-testid="metric-container"] {
-    background: white;
-    padding: 15px;
-    border-radius: 12px;
-    border-left: 6px solid #1FBF8F;
-}
-</style>
-""", unsafe_allow_html=True)
 
 st.title("🏥 NHIP Executive Dashboard")
 
 SPREADSHEET_ID = "1Y4FANer87OduQcK7XctCjJ0FBEKTHlXJ4aMZklcqzFU"
 
 # ==============================
-# โหลดรายชื่อ Sheet ทั้งหมด
+# โหลดรายชื่อ Sheet
 # ==============================
 @st.cache_data(ttl=300)
 def get_sheet_names():
-    url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:json"
-    res = requests.get(url)
-    text = res.text
-    json_str = text[text.find("{"):text.rfind("}")+1]
-    data = json.loads(json_str)
-    sheets = data.get("sheets", [])
-    return [s["properties"]["title"] for s in sheets]
+    try:
+        url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:json"
+        res = requests.get(url)
+        text = res.text
+        json_str = text[text.find("{"):text.rfind("}")+1]
+        data = json.loads(json_str)
+        sheets = data.get("sheets", [])
+        return [s["properties"]["title"] for s in sheets]
+    except:
+        return []
 
 # ==============================
 # โหลดข้อมูลทุก Sheet
@@ -48,20 +35,35 @@ def load_all_sheets():
     sheet_list = get_sheet_names()
     all_dfs = []
 
+    if not sheet_list:
+        return None
+
     for sheet in sheet_list:
         try:
             encoded_sheet = quote(sheet)
             url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet={encoded_sheet}"
             df = pd.read_csv(url)
-            df.columns = df.columns.str.strip()
-            df["Sheet"] = sheet
-            all_dfs.append(df)
+            if not df.empty:
+                df.columns = df.columns.str.strip()
+                df["Sheet"] = sheet
+                all_dfs.append(df)
         except:
-            pass
+            continue
+
+    if len(all_dfs) == 0:
+        return None
 
     return pd.concat(all_dfs, ignore_index=True)
 
 df = load_all_sheets()
+
+# ==============================
+# ถ้าโหลดไม่ได้
+# ==============================
+if df is None:
+    st.error("❌ ไม่สามารถโหลดข้อมูลจาก Google Sheet ได้")
+    st.info("กรุณาตรวจสอบว่า Google Sheet เปิดเป็น 'Anyone with the link → Viewer'")
+    st.stop()
 
 # ==============================
 # ตรวจจับคอลัมน์
@@ -80,7 +82,6 @@ st.sidebar.header("📊 ตัวกรองข้อมูล")
 
 filtered_df = df.copy()
 
-# Filter เขต
 if zone_col:
     zone_list = sorted(df[zone_col].dropna().unique())
     selected_zone = st.sidebar.multiselect(
@@ -90,7 +91,6 @@ if zone_col:
     )
     filtered_df = filtered_df[filtered_df[zone_col].isin(selected_zone)]
 
-# Filter จังหวัด
 if province_col:
     province_list = sorted(filtered_df[province_col].dropna().unique())
     selected_province = st.sidebar.multiselect(
@@ -114,10 +114,8 @@ if province_col:
 
 col3.metric("จำนวน Sheet ทั้งหมด", filtered_df["Sheet"].nunique())
 
-st.divider()
-
 # ==============================
-# วิเคราะห์แนวโน้มอัตโนมัติ
+# แนวโน้ม
 # ==============================
 if date_col:
 
@@ -138,7 +136,6 @@ if date_col:
             prev = sheet_data["จำนวน"].iloc[-2]
 
             change = last - prev
-            percent = (change / prev * 100) if prev != 0 else 0
 
             if change > 0:
                 status = "🟢 เพิ่มขึ้น"
@@ -147,29 +144,17 @@ if date_col:
             else:
                 status = "🟡 คงที่"
 
-            st.markdown(f"**{sheet}** : {status} {change:+} ({percent:.1f}%)")
+            st.markdown(f"**{sheet}** : {status} {change:+}")
 
-    fig_trend = px.line(
+    fig = px.line(
         trend_df,
         x=date_col,
         y="จำนวน",
         color="Sheet",
-        markers=True,
-        color_discrete_sequence=px.colors.sequential.Teal
+        markers=True
     )
 
-    st.plotly_chart(fig_trend, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
 
 st.divider()
-
-# ==============================
-# ตารางข้อมูล
-# ==============================
 st.dataframe(filtered_df, use_container_width=True)
-
-st.download_button(
-    "📥 ดาวน์โหลดข้อมูล (CSV)",
-    filtered_df.to_csv(index=False).encode("utf-8"),
-    file_name="NHIP_filtered_data.csv",
-    mime="text/csv"
-)
