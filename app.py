@@ -1,11 +1,9 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from streamlit_autorefresh import st_autorefresh
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
 from reportlab.lib import colors
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib import styles
+from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import TableStyle
 from io import BytesIO
@@ -15,26 +13,28 @@ st.set_page_config(page_title="NHIP Smart Dashboard", layout="wide")
 st.title("📊 NHIP Smart Auto Dashboard")
 
 # ==============================
-# 🔄 Auto Refresh ทุก 5 นาที
-# ==============================
-
-st_autorefresh(interval=300000, key="datarefresh")  # 300000 ms = 5 นาที
-
-# ==============================
-# 🔗 เชื่อม Google Sheet
+# 🔗 Google Sheet Config
 # ==============================
 
 SPREADSHEET_ID = "1Y4FANer87OduQcK7XctCjJ0FBEKTHlXJ4aMZklcqzFU"
 GID = "0"
 
-url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv&gid={GID}"
+# ==============================
+# 🔄 Load Data (Auto refresh ทุก 5 นาที)
+# ==============================
 
-try:
+@st.cache_data(ttl=300)
+def load_data():
+    url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/export?format=csv&gid={GID}"
     df = pd.read_csv(url)
     df.columns = df.columns.str.strip()
-    st.success("เชื่อม Google Drive สำเร็จ ✅")
-except:
-    st.error("❌ เชื่อมไม่ได้ กรุณาตรวจสอบการแชร์")
+    return df
+
+try:
+    df = load_data()
+    st.success("เชื่อม Google Drive สำเร็จ ✅ (Auto refresh ทุก 5 นาที)")
+except Exception as e:
+    st.error("❌ เชื่อมไม่ได้ กรุณาตรวจสอบว่าแชร์แบบ Anyone with the link → Viewer")
     st.stop()
 
 # ==============================
@@ -51,10 +51,10 @@ for col in df.columns:
         date_col = col
     elif "จังหวัด" in col or "province" in col.lower():
         province_col = col
-    elif df[col].dtype == "object" and not category_col:
-        category_col = col
     elif pd.api.types.is_numeric_dtype(df[col]) and not numeric_col:
         numeric_col = col
+    elif df[col].dtype == "object" and not category_col:
+        category_col = col
 
 if date_col:
     df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
@@ -63,7 +63,7 @@ if date_col:
 # 🎛 Filters
 # ==============================
 
-st.sidebar.header("🔎 ตัวกรอง")
+st.sidebar.header("🔎 ตัวกรองข้อมูล")
 
 filtered_df = df.copy()
 
@@ -82,12 +82,14 @@ if category_col:
     filtered_df = filtered_df[filtered_df[category_col].isin(category_filter)]
 
 # ==============================
-# 📊 KPI
+# 📊 KPI Section
 # ==============================
+
+st.divider()
 
 col1, col2, col3 = st.columns(3)
 
-col1.metric("จำนวนทั้งหมด", len(filtered_df))
+col1.metric("จำนวนรายการทั้งหมด", len(filtered_df))
 
 if province_col:
     col2.metric("จำนวนจังหวัด", filtered_df[province_col].nunique())
@@ -116,7 +118,13 @@ if date_col:
     )
 
     if not trend_df.empty:
-        fig1 = px.line(trend_df, x=date_col, y="จำนวน", markers=True)
+        fig1 = px.line(
+            trend_df,
+            x=date_col,
+            y="จำนวน",
+            markers=True,
+            template="plotly_white"
+        )
         col_left.plotly_chart(fig1, use_container_width=True)
 
 if province_col:
@@ -128,20 +136,25 @@ if province_col:
         .sort_values("จำนวน", ascending=False)
     )
 
-    fig2 = px.bar(bar_df, x=province_col, y="จำนวน")
+    fig2 = px.bar(
+        bar_df,
+        x=province_col,
+        y="จำนวน",
+        template="plotly_white"
+    )
     col_right.plotly_chart(fig2, use_container_width=True)
 
 st.divider()
 
 # ==============================
-# 📋 ตารางข้อมูล
+# 📋 Data Table
 # ==============================
 
 with st.expander("📋 ดูข้อมูลทั้งหมด"):
     st.dataframe(filtered_df, use_container_width=True)
 
 # ==============================
-# 📄 Export PDF Report
+# 📄 Export PDF
 # ==============================
 
 def generate_pdf(dataframe):
@@ -149,11 +162,10 @@ def generate_pdf(dataframe):
     doc = SimpleDocTemplate(buffer)
     elements = []
 
-    style = styles.getSampleStyleSheet()
-    elements.append(Paragraph("NHIP Dashboard Report", style["Title"]))
+    styles = getSampleStyleSheet()
+    elements.append(Paragraph("NHIP Dashboard Report", styles["Title"]))
     elements.append(Spacer(1, 0.5 * inch))
 
-    # เอาเฉพาะ 20 แถวแรกกัน PDF ใหญ่เกิน
     table_data = [dataframe.columns.tolist()] + dataframe.head(20).values.tolist()
 
     table = Table(table_data)
