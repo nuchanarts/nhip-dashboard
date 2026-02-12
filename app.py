@@ -26,9 +26,9 @@ st.title("🏥 NHIP Executive Dashboard")
 
 SPREADSHEET_ID = "1Y4FANer87OduQcK7XctCjJ0FBEKTHlXJ4aMZklcqzFU"
 
-# ===============================
-# โหลดชื่อ Sheet
-# ===============================
+# =====================================================
+# 📄 โหลดรายชื่อ Sheet จาก Google Drive
+# =====================================================
 @st.cache_data(ttl=300)
 def get_sheet_names():
     url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:json"
@@ -41,15 +41,24 @@ def get_sheet_names():
 
 sheet_list = get_sheet_names()
 
+# =====================================================
+# 🎛 SIDEBAR FILTERS (เรียงลำดับชัดเจน)
+# =====================================================
+st.sidebar.header("📊 ตัวกรองข้อมูล")
+
 selected_sheets = st.sidebar.multiselect(
-    "📄 เลือก Sheet",
+    "1️⃣ เลือก Sheet",
     sheet_list,
     default=sheet_list[:1]
 )
 
-# ===============================
-# โหลดข้อมูล
-# ===============================
+if not selected_sheets:
+    st.warning("กรุณาเลือกอย่างน้อย 1 Sheet")
+    st.stop()
+
+# =====================================================
+# 📥 โหลดข้อมูลตาม Sheet ที่เลือก
+# =====================================================
 @st.cache_data(ttl=300)
 def load_sheet(sheet):
     url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet}"
@@ -59,13 +68,11 @@ def load_sheet(sheet):
     return df
 
 dfs = [load_sheet(s) for s in selected_sheets]
-
-if not dfs:
-    st.stop()
-
 df = pd.concat(dfs, ignore_index=True)
 
-# ตรวจจับคอลัมน์
+# =====================================================
+# 🔍 ตรวจจับคอลัมน์อัตโนมัติ
+# =====================================================
 zone_col = next((c for c in df.columns if "เขต" in c), None)
 province_col = next((c for c in df.columns if "จังหวัด" in c), None)
 date_col = next((c for c in df.columns if "วัน" in c or "date" in c.lower()), None)
@@ -73,54 +80,50 @@ date_col = next((c for c in df.columns if "วัน" in c or "date" in c.lower(
 if date_col:
     df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
 
-# ===============================
-# 🔎 ตัวกรอง
-# ===============================
+# =====================================================
+# 🎛 Filter เขต
+# =====================================================
 filtered_df = df.copy()
 
 if zone_col:
+    zone_list = sorted(df[zone_col].dropna().unique())
     selected_zone = st.sidebar.multiselect(
-        "เลือกเขต",
-        df[zone_col].dropna().unique(),
-        default=df[zone_col].dropna().unique()
+        "2️⃣ เลือกเขต",
+        zone_list,
+        default=zone_list
     )
     filtered_df = filtered_df[filtered_df[zone_col].isin(selected_zone)]
 
+# =====================================================
+# 🎛 Filter จังหวัด
+# =====================================================
 if province_col:
+    province_list = sorted(filtered_df[province_col].dropna().unique())
     selected_province = st.sidebar.multiselect(
-        "เลือกจังหวัด",
-        filtered_df[province_col].dropna().unique(),
-        default=filtered_df[province_col].dropna().unique()
+        "3️⃣ เลือกจังหวัด",
+        province_list,
+        default=province_list
     )
     filtered_df = filtered_df[filtered_df[province_col].isin(selected_province)]
 
 # =====================================================
 # 📊 EXECUTIVE SUMMARY
 # =====================================================
-
 st.header("📊 Executive Summary")
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3 = st.columns(3)
 
-total_records = len(filtered_df)
-sheet_summary = filtered_df.groupby("Sheet").size().reset_index(name="จำนวน")
-top_sheet = sheet_summary.sort_values("จำนวน", ascending=False).iloc[0]["Sheet"]
-
-col1.metric("จำนวนรวมทั้งหมด", total_records)
-col2.metric("Sheet สูงสุด", top_sheet)
-col3.metric("จำนวน Sheet ที่เลือก", len(selected_sheets))
+col1.metric("จำนวนข้อมูลทั้งหมด", len(filtered_df))
+col2.metric("จำนวน Sheet ที่เลือก", len(selected_sheets))
 
 if province_col:
-    col4.metric("จังหวัดทั้งหมด", filtered_df[province_col].nunique())
+    col3.metric("จำนวนจังหวัด", filtered_df[province_col].nunique())
 
 st.divider()
 
 # =====================================================
-# 🧠 วิเคราะห์แนวโน้มอัตโนมัติ
+# 🧠 วิเคราะห์แนวโน้ม
 # =====================================================
-
-st.header("🧠 Automatic Trend Analysis")
-
 if date_col:
 
     trend_df = (
@@ -130,7 +133,7 @@ if date_col:
         .reset_index(name="จำนวน")
     )
 
-    insights = []
+    st.subheader("🧠 วิเคราะห์แนวโน้มล่าสุด")
 
     for sheet in selected_sheets:
         sheet_data = trend_df[trend_df["Sheet"] == sheet].sort_values(date_col)
@@ -149,14 +152,8 @@ if date_col:
             else:
                 status = "🟡 คงที่"
 
-            insights.append(f"• **{sheet}** : {status} {change:+} ({percent:.1f}%)")
+            st.markdown(f"**{sheet}** : {status} {change:+} ({percent:.1f}%)")
 
-    for i in insights:
-        st.markdown(i)
-
-    st.divider()
-
-    # กราฟแนวโน้ม
     fig_trend = px.line(
         trend_df,
         x=date_col,
@@ -168,30 +165,9 @@ if date_col:
 
     st.plotly_chart(fig_trend, use_container_width=True)
 
-# =====================================================
-# 📊 เปรียบเทียบจังหวัด
-# =====================================================
-
-if province_col:
-    compare_df = (
-        filtered_df
-        .groupby(["Sheet", province_col])
-        .size()
-        .reset_index(name="จำนวน")
-    )
-
-    fig_compare = px.bar(
-        compare_df,
-        x=province_col,
-        y="จำนวน",
-        color="Sheet",
-        barmode="group",
-        color_discrete_sequence=px.colors.sequential.Mint
-    )
-
-    st.header("📊 เปรียบเทียบตามจังหวัด")
-    st.plotly_chart(fig_compare, use_container_width=True)
-
 st.divider()
 
+# =====================================================
+# 📊 ตารางข้อมูล
+# =====================================================
 st.dataframe(filtered_df, use_container_width=True)
