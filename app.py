@@ -3,12 +3,16 @@ import pandas as pd
 import plotly.express as px
 import requests
 import json
+from urllib.parse import quote
 
+# ==============================
+# ตั้งค่าแอป
+# ==============================
 st.set_page_config(page_title="NHIP Executive Dashboard", layout="wide")
 
-# ===============================
-# 🎨 โทนสาธารณสุขสว่าง
-# ===============================
+# ==============================
+# โทนสีสาธารณสุข
+# ==============================
 st.markdown("""
 <style>
 .main { background-color: #F3FBF8; }
@@ -24,11 +28,14 @@ div[data-testid="metric-container"] {
 
 st.title("🏥 NHIP Executive Dashboard")
 
+# ==============================
+# Google Sheet ID
+# ==============================
 SPREADSHEET_ID = "1Y4FANer87OduQcK7XctCjJ0FBEKTHlXJ4aMZklcqzFU"
 
-# =====================================================
-# 📄 โหลดรายชื่อ Sheet จาก Google Drive
-# =====================================================
+# ==============================
+# โหลดรายชื่อ Sheet
+# ==============================
 @st.cache_data(ttl=300)
 def get_sheet_names():
     url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:json"
@@ -41,9 +48,9 @@ def get_sheet_names():
 
 sheet_list = get_sheet_names()
 
-# =====================================================
-# 🎛 SIDEBAR FILTERS (เรียงลำดับชัดเจน)
-# =====================================================
+# ==============================
+# Sidebar Filters
+# ==============================
 st.sidebar.header("📊 ตัวกรองข้อมูล")
 
 selected_sheets = st.sidebar.multiselect(
@@ -56,12 +63,13 @@ if not selected_sheets:
     st.warning("กรุณาเลือกอย่างน้อย 1 Sheet")
     st.stop()
 
-# =====================================================
-# 📥 โหลดข้อมูลตาม Sheet ที่เลือก
-# =====================================================
+# ==============================
+# โหลดข้อมูลจาก Google Sheet
+# ==============================
 @st.cache_data(ttl=300)
 def load_sheet(sheet):
-    url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet}"
+    encoded_sheet = quote(sheet)
+    url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet={encoded_sheet}"
     df = pd.read_csv(url)
     df.columns = df.columns.str.strip()
     df["Sheet"] = sheet
@@ -70,9 +78,9 @@ def load_sheet(sheet):
 dfs = [load_sheet(s) for s in selected_sheets]
 df = pd.concat(dfs, ignore_index=True)
 
-# =====================================================
-# 🔍 ตรวจจับคอลัมน์อัตโนมัติ
-# =====================================================
+# ==============================
+# ตรวจจับคอลัมน์อัตโนมัติ
+# ==============================
 zone_col = next((c for c in df.columns if "เขต" in c), None)
 province_col = next((c for c in df.columns if "จังหวัด" in c), None)
 date_col = next((c for c in df.columns if "วัน" in c or "date" in c.lower()), None)
@@ -80,9 +88,9 @@ date_col = next((c for c in df.columns if "วัน" in c or "date" in c.lower(
 if date_col:
     df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
 
-# =====================================================
-# 🎛 Filter เขต
-# =====================================================
+# ==============================
+# Filter เขต
+# ==============================
 filtered_df = df.copy()
 
 if zone_col:
@@ -94,9 +102,9 @@ if zone_col:
     )
     filtered_df = filtered_df[filtered_df[zone_col].isin(selected_zone)]
 
-# =====================================================
-# 🎛 Filter จังหวัด
-# =====================================================
+# ==============================
+# Filter จังหวัด
+# ==============================
 if province_col:
     province_list = sorted(filtered_df[province_col].dropna().unique())
     selected_province = st.sidebar.multiselect(
@@ -106,9 +114,9 @@ if province_col:
     )
     filtered_df = filtered_df[filtered_df[province_col].isin(selected_province)]
 
-# =====================================================
-# 📊 EXECUTIVE SUMMARY
-# =====================================================
+# ==============================
+# Executive Summary
+# ==============================
 st.header("📊 Executive Summary")
 
 col1, col2, col3 = st.columns(3)
@@ -121,9 +129,9 @@ if province_col:
 
 st.divider()
 
-# =====================================================
-# 🧠 วิเคราะห์แนวโน้ม
-# =====================================================
+# ==============================
+# วิเคราะห์แนวโน้มอัตโนมัติ
+# ==============================
 if date_col:
 
     trend_df = (
@@ -167,7 +175,39 @@ if date_col:
 
 st.divider()
 
-# =====================================================
-# 📊 ตารางข้อมูล
-# =====================================================
+# ==============================
+# เปรียบเทียบจังหวัด
+# ==============================
+if province_col:
+    compare_df = (
+        filtered_df
+        .groupby(["Sheet", province_col])
+        .size()
+        .reset_index(name="จำนวน")
+    )
+
+    fig_compare = px.bar(
+        compare_df,
+        x=province_col,
+        y="จำนวน",
+        color="Sheet",
+        barmode="group",
+        color_discrete_sequence=px.colors.sequential.Mint
+    )
+
+    st.header("📊 เปรียบเทียบตามจังหวัด")
+    st.plotly_chart(fig_compare, use_container_width=True)
+
+st.divider()
+
+# ==============================
+# ตารางข้อมูล
+# ==============================
 st.dataframe(filtered_df, use_container_width=True)
+
+st.download_button(
+    "📥 ดาวน์โหลดข้อมูล (CSV)",
+    filtered_df.to_csv(index=False).encode("utf-8"),
+    file_name="NHIP_filtered_data.csv",
+    mime="text/csv"
+)
