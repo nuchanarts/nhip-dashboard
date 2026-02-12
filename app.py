@@ -4,165 +4,194 @@ import plotly.express as px
 import requests
 import json
 
-st.set_page_config(page_title="NHIP Dashboard", layout="wide")
-st.title("📊 NHIP Smart Dashboard")
+st.set_page_config(page_title="NHIP Executive Dashboard", layout="wide")
+
+# ===============================
+# 🎨 โทนสาธารณสุขสว่าง
+# ===============================
+st.markdown("""
+<style>
+.main { background-color: #F3FBF8; }
+h1, h2, h3 { color: #127C5C; }
+div[data-testid="metric-container"] {
+    background: white;
+    padding: 15px;
+    border-radius: 12px;
+    border-left: 6px solid #1FBF8F;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.title("🏥 NHIP Executive Dashboard")
 
 SPREADSHEET_ID = "1Y4FANer87OduQcK7XctCjJ0FBEKTHlXJ4aMZklcqzFU"
 
-# ==============================
-# 🔄 โหลดรายชื่อ Sheet จาก Google
-# ==============================
-
+# ===============================
+# โหลดชื่อ Sheet
+# ===============================
 @st.cache_data(ttl=300)
 def get_sheet_names():
     url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:json"
     res = requests.get(url)
     text = res.text
+    json_str = text[text.find("{"):text.rfind("}")+1]
+    data = json.loads(json_str)
+    sheets = data.get("sheets", [])
+    return [s["properties"]["title"] for s in sheets]
 
-    # Google จะส่ง JSON ครอบด้วย function call ต้องตัดออก
-    json_data = text[text.find("{"):text.rfind("}")+1]
-    data = json.loads(json_data)
+sheet_list = get_sheet_names()
 
-    sheets = [sheet["properties"]["title"] for sheet in data["table"]["cols"]]
-    return sheets
+selected_sheets = st.sidebar.multiselect(
+    "📄 เลือก Sheet",
+    sheet_list,
+    default=sheet_list[:1]
+)
 
-# วิธีที่เสถียรกว่า (ดึงจาก HTML metadata)
+# ===============================
+# โหลดข้อมูล
+# ===============================
 @st.cache_data(ttl=300)
-def get_sheet_names_safe():
-    url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
-    res = requests.get(url)
-    text = res.text
-    titles = []
-    for line in text.split('"title":"')[1:]:
-        titles.append(line.split('"')[0])
-    return list(set(titles))
-
-
-# ใช้แบบ safe
-try:
-    sheet_list = get_sheet_names_safe()
-except:
-    st.error("❌ ไม่สามารถอ่านรายชื่อ Sheet ได้ ตรวจสอบการแชร์ไฟล์")
-    st.stop()
-
-selected_sheet = st.sidebar.selectbox("📄 เลือก Sheet", sheet_list)
-
-# ==============================
-# 🔄 โหลดข้อมูลจาก sheet ที่เลือก
-# ==============================
-
-@st.cache_data(ttl=300)
-def load_data(sheet_name):
-    url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+def load_sheet(sheet):
+    url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet}"
     df = pd.read_csv(url)
     df.columns = df.columns.str.strip()
+    df["Sheet"] = sheet
     return df
 
-try:
-    df = load_data(selected_sheet)
-    st.success("เชื่อม Google Drive สำเร็จ ✅ (Auto refresh 5 นาที)")
-except:
-    st.error("❌ โหลดข้อมูลไม่ได้ กรุณาตรวจสอบการแชร์ Anyone with link → Viewer")
+dfs = [load_sheet(s) for s in selected_sheets]
+
+if not dfs:
     st.stop()
 
-# ==============================
-# 🧠 ตรวจจับคอลัมน์
-# ==============================
+df = pd.concat(dfs, ignore_index=True)
 
-zone_col = None
-province_col = None
-date_col = None
-
-for col in df.columns:
-    if "เขต" in col:
-        zone_col = col
-    elif "จังหวัด" in col:
-        province_col = col
-    elif "วัน" in col or "date" in col.lower():
-        date_col = col
+# ตรวจจับคอลัมน์
+zone_col = next((c for c in df.columns if "เขต" in c), None)
+province_col = next((c for c in df.columns if "จังหวัด" in c), None)
+date_col = next((c for c in df.columns if "วัน" in c or "date" in c.lower()), None)
 
 if date_col:
     df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
 
-# ==============================
-# 🎛 Filters
-# ==============================
-
-st.sidebar.header("🔎 ตัวกรองข้อมูล")
-
+# ===============================
+# 🔎 ตัวกรอง
+# ===============================
 filtered_df = df.copy()
 
 if zone_col:
-    zones = df[zone_col].dropna().unique()
-    selected_zone = st.sidebar.multiselect("เลือกเขต", zones, default=zones)
+    selected_zone = st.sidebar.multiselect(
+        "เลือกเขต",
+        df[zone_col].dropna().unique(),
+        default=df[zone_col].dropna().unique()
+    )
     filtered_df = filtered_df[filtered_df[zone_col].isin(selected_zone)]
 
 if province_col:
-    provinces = filtered_df[province_col].dropna().unique()
-    selected_province = st.sidebar.multiselect("เลือกจังหวัด", provinces, default=provinces)
+    selected_province = st.sidebar.multiselect(
+        "เลือกจังหวัด",
+        filtered_df[province_col].dropna().unique(),
+        default=filtered_df[province_col].dropna().unique()
+    )
     filtered_df = filtered_df[filtered_df[province_col].isin(selected_province)]
 
-# ==============================
-# 📊 KPI
-# ==============================
+# =====================================================
+# 📊 EXECUTIVE SUMMARY
+# =====================================================
 
-st.divider()
-col1, col2, col3 = st.columns(3)
+st.header("📊 Executive Summary")
 
-col1.metric("จำนวนรายการ", len(filtered_df))
+col1, col2, col3, col4 = st.columns(4)
 
-if zone_col:
-    col2.metric("จำนวนเขต", filtered_df[zone_col].nunique())
+total_records = len(filtered_df)
+sheet_summary = filtered_df.groupby("Sheet").size().reset_index(name="จำนวน")
+top_sheet = sheet_summary.sort_values("จำนวน", ascending=False).iloc[0]["Sheet"]
+
+col1.metric("จำนวนรวมทั้งหมด", total_records)
+col2.metric("Sheet สูงสุด", top_sheet)
+col3.metric("จำนวน Sheet ที่เลือก", len(selected_sheets))
 
 if province_col:
-    col3.metric("จำนวนจังหวัด", filtered_df[province_col].nunique())
+    col4.metric("จังหวัดทั้งหมด", filtered_df[province_col].nunique())
 
 st.divider()
 
-# ==============================
-# 📈 กราฟ
-# ==============================
+# =====================================================
+# 🧠 วิเคราะห์แนวโน้มอัตโนมัติ
+# =====================================================
 
-col_left, col_right = st.columns(2)
+st.header("🧠 Automatic Trend Analysis")
 
 if date_col:
+
     trend_df = (
         filtered_df
-        .groupby(filtered_df[date_col].dt.date)
+        .groupby(["Sheet", filtered_df[date_col].dt.date])
         .size()
         .reset_index(name="จำนวน")
     )
-    if not trend_df.empty:
-        fig1 = px.line(trend_df, x=date_col, y="จำนวน", markers=True)
-        col_left.plotly_chart(fig1, use_container_width=True)
+
+    insights = []
+
+    for sheet in selected_sheets:
+        sheet_data = trend_df[trend_df["Sheet"] == sheet].sort_values(date_col)
+
+        if len(sheet_data) >= 2:
+            last = sheet_data["จำนวน"].iloc[-1]
+            prev = sheet_data["จำนวน"].iloc[-2]
+
+            change = last - prev
+            percent = (change / prev * 100) if prev != 0 else 0
+
+            if change > 0:
+                status = "🟢 เพิ่มขึ้น"
+            elif change < 0:
+                status = "🔴 ลดลง"
+            else:
+                status = "🟡 คงที่"
+
+            insights.append(f"• **{sheet}** : {status} {change:+} ({percent:.1f}%)")
+
+    for i in insights:
+        st.markdown(i)
+
+    st.divider()
+
+    # กราฟแนวโน้ม
+    fig_trend = px.line(
+        trend_df,
+        x=date_col,
+        y="จำนวน",
+        color="Sheet",
+        markers=True,
+        color_discrete_sequence=px.colors.sequential.Teal
+    )
+
+    st.plotly_chart(fig_trend, use_container_width=True)
+
+# =====================================================
+# 📊 เปรียบเทียบจังหวัด
+# =====================================================
 
 if province_col:
-    bar_df = (
+    compare_df = (
         filtered_df
-        .groupby(province_col)
+        .groupby(["Sheet", province_col])
         .size()
         .reset_index(name="จำนวน")
-        .sort_values("จำนวน", ascending=False)
     )
-    fig2 = px.bar(bar_df, x=province_col, y="จำนวน")
-    col_right.plotly_chart(fig2, use_container_width=True)
+
+    fig_compare = px.bar(
+        compare_df,
+        x=province_col,
+        y="จำนวน",
+        color="Sheet",
+        barmode="group",
+        color_discrete_sequence=px.colors.sequential.Mint
+    )
+
+    st.header("📊 เปรียบเทียบตามจังหวัด")
+    st.plotly_chart(fig_compare, use_container_width=True)
 
 st.divider()
 
-# ==============================
-# 📋 ตารางข้อมูล
-# ==============================
-
-with st.expander("📋 ดูข้อมูลทั้งหมด"):
-    st.dataframe(filtered_df, use_container_width=True)
-
-# ==============================
-# 📥 Export CSV
-# ==============================
-
-st.download_button(
-    label="📥 ดาวน์โหลดข้อมูล (CSV)",
-    data=filtered_df.to_csv(index=False).encode("utf-8"),
-    file_name=f"{selected_sheet}_report.csv",
-    mime="text/csv"
-)
+st.dataframe(filtered_df, use_container_width=True)
